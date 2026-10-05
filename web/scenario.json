@@ -1,0 +1,21 @@
+{
+ "service": "disaster-response-coordinator",
+ "run": "demo-1",
+ "tokens": {"commander": "gulf-commander-demo", "dispatcher": "gulf-dispatcher-demo", "viewer": "gulf-viewer-demo"},
+ "steps": [
+  {"title": "Six hours before peak surge", "say": "A Category 4 hurricane is forecast to push a 4.5 m surge (give or take 0.7 m) onto an invented coastal county of 241,000 people. The river splits the county in two, with four bridges across it.",
+   "calls": [{"key": "load", "as": "commander", "method": "POST", "path": "/v1/scenarios/hurricane"}, {"key": "map0", "as": "viewer", "method": "GET", "path": "/v1/map"}]},
+  {"title": "Which neighbourhoods will be cut off?", "say": "The surge height is uncertain and the elevation survey is slightly wrong. The risk model replays the storm 300 times with both varied, and counts how often each neighbourhood ends up with no open road to a working hospital.",
+   "calls": [{"key": "risk", "as": "viewer", "method": "GET", "path": "/v1/risk/isolation?target_hour=6"}]},
+  {"title": "Warn them, and decide who goes to which shelter", "say": "Every neighbourhood with at least an even chance of being cut off is told to leave. Shelter places are limited, so the allocation minimises total travel time and reports how many people have no place.",
+   "calls": [{"key": "evac", "as": "viewer", "method": "GET", "path": "/v1/evacuation/routes?min_probability=0.5"}, {"key": "alert", "as": "commander", "method": "POST", "path": "/v1/alerts/broadcast", "body": {"message": "Storm surge expected within six hours. Leave now for your assigned shelter.", "min_probability": 0.5}}]},
+  {"title": "Landfall: two bridges close, calls start coming in", "say": "Four hours on. Citizen reports arrive from 911, an app and social media: each is classified, merged with other reports of the same emergency or filed as noise. Then every unit is assigned at once.",
+   "calls": [{"key": "adv4", "as": "commander", "method": "POST", "path": "/v1/scenarios/hurricane:advance", "body": {"to_hour": 4}}, {"key": "plan4", "as": "dispatcher", "method": "POST", "path": "/v1/optimize/dispatch"}, {"key": "map4", "as": "viewer", "method": "GET", "path": "/v1/map"}]},
+  {"title": "Peak surge: a third bridge goes, a hospital loses power", "say": "Two hours later the west side is joined to the east by one bridge, the coast is under water, shelters are full and West General is turning new patients away. There are now more emergencies than units.",
+   "calls": [{"key": "adv6", "as": "commander", "method": "POST", "path": "/v1/scenarios/hurricane:advance", "body": {"to_hour": 6}}, {"key": "plan6", "as": "dispatcher", "method": "POST", "path": "/v1/optimize/dispatch"}, {"key": "map6", "as": "viewer", "method": "GET", "path": "/v1/map"}]},
+  {"title": "Something breaks: a unit drops out", "say": "The unit sent to the most severe incident reports itself out of service. Its incident goes back to the queue, and the plan is solved again around the gap.",
+   "calls": [{"key": "tele", "as": "dispatcher", "method": "POST", "path": "/v1/resources/{{plan6.assignments.0.unit_id}}/telemetry", "body": {"lat": 27.745, "lon": -82.59, "status": "out_of_service"}}, {"key": "plan6b", "as": "dispatcher", "method": "POST", "path": "/v1/optimize/dispatch"}]},
+  {"title": "Was the forecast right?", "say": "The forecast made at hour 0 is scored against the neighbourhoods that are actually cut off now, beside a simpler rule. Every decision above is in an audit log that cannot be edited.",
+   "calls": [{"key": "verify", "as": "viewer", "method": "GET", "path": "/v1/risk/isolation/verification?made_at_hour=0"}, {"key": "audit", "as": "commander", "method": "GET", "path": "/v1/audit?limit=10"}]}
+ ]
+}

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disaster Response Coordination</title>
+<link rel="stylesheet" href="kit.css">
+</head>
+<body>
+<header class="top">
+  <h1>Disaster Response Coordination</h1>
+  <span class="sub">An invented coastal county, a Category 4 hurricane, 24 response units. Who gets cut off, and who gets help first?</span>
+  <span class="mode">…</span>
+  <button class="primary" id="runall">Run all steps</button>
+</header>
+<main>
+  <nav class="steps"></nav>
+  <div><div id="steps"></div></div>
+</main>
+<footer>The county, the storm and every report are simulated. Nothing here is real, no alert is sent, and this is decision support: a person approves every dispatch.</footer>
+<script src="kit.js"></script>
+<script>
+const TYPE = { water_rescue: ['Water rescue', '#4fc3d9'], medical: ['Medical', '#ef6a6a'], fire: ['Fire', '#e0a63c'], utility: ['Utility', '#b78cf2'] };
+const UNIT = { boat: '#4fc3d9', ambulance: '#ef6a6a', engine: '#e0a63c' };
+const K = x => x >= 1e4 ? fmt.n(x / 1e3, 0) + 'k' : fmt.n(x);
+// o.p: probability per block (shaded red); o.actual: blocks actually cut off (outlined)
+function mapSvg(m, o = {}) {
+  const S = 44, pad = 14, gap = 16, W = m.w, H = m.h, w = W * S + pad * 2 + gap, h = H * S + pad * 2 + 18;
+  const X = n => pad + (n % W) * S + S / 2 + ((n % W) > m.river_after_column ? gap : 0), Y = n => pad + (H - 1 - Math.floor(n / W)) * S + S / 2;
+  let g = `<rect x="${pad + (m.river_after_column + 1) * S}" y="${pad}" width="${gap}" height="${H * S + 18}" fill="#17355c"/><rect x="${pad}" y="${pad + H * S}" width="${W * S + gap}" height="18" fill="#17355c"/>
+    <text x="${pad + 6}" y="${pad + H * S + 13}">Gulf: the surge comes from this side</text>`;
+  m.elevation.forEach((e, n) => { const p = o.p ? o.p[n] : null;
+    const fill = p == null ? `rgba(122,162,255,${(0.03 + Math.min(e, 9) / 9 * 0.2).toFixed(3)})` : p >= 0.02 ? `rgba(239,106,106,${(0.1 + 0.75 * p).toFixed(3)})` : 'rgba(255,255,255,.03)';
+    g += `<rect x="${X(n) - S / 2 + 2}" y="${Y(n) - S / 2 + 2}" width="${S - 4}" height="${S - 4}" rx="5" fill="${fill}" ${o.actual && o.actual[n] ? 'stroke="#ececf1" stroke-width="1.6"' : ''}><title>block ${n % W},${Math.floor(n / W)} · ${e} m · ${fmt.n(m.population[n])} people${p == null ? '' : ' · ' + fmt.pct(p) + ' chance cut off'}</title></rect>`; });
+  for (const [a, b, bridge, closed] of m.edges) g += `<line x1="${X(a)}" y1="${Y(a)}" x2="${X(b)}" y2="${Y(b)}" stroke="${closed ? '#ef6a6a' : bridge ? '#d6d6de' : '#4d4d59'}" stroke-width="${bridge ? 4 : 1.3}" ${closed ? 'stroke-dasharray="3 3"' : ''}/>`;
+  for (const s of m.shelters) g += `<rect x="${X(s.node) - 16}" y="${Y(s.node) - 16}" width="13" height="13" rx="2" fill="${s.occupancy >= s.capacity ? '#e0a63c' : '#3fb97a'}"><title>${esc(s.name)}: ${s.occupancy} of ${s.capacity}</title></rect><text x="${X(s.node) - 9.5}" y="${Y(s.node) - 6}" text-anchor="middle" style="fill:#04150c;font-weight:700;font-size:10px">S</text>`;
+  for (const s of m.hospitals) g += `<rect x="${X(s.node) + 3}" y="${Y(s.node) - 16}" width="13" height="13" rx="2" fill="${s.status === 'open' ? '#ececf1' : '#e0a63c'}"><title>${esc(s.name)}: ${s.status}, ${s.occupied} of ${s.beds} beds</title></rect><text x="${X(s.node) + 9.5}" y="${Y(s.node) - 6}" text-anchor="middle" style="fill:#0b0b0c;font-weight:700;font-size:10px">H</text>`;
+  const at = {};
+  for (const u of m.units) { const k = at[u.node] = (at[u.node] || 0) + 1; g += `<circle cx="${X(u.node) - 15 + ((k - 1) % 6) * 6}" cy="${Y(u.node) + 15 - Math.floor((k - 1) / 6) * 6}" r="2.4" fill="${u.status === 'out_of_service' ? '#55555f' : UNIT[u.resource_type]}"><title>${esc(u.name)}: ${u.status}</title></circle>`; }
+  for (const i of m.incidents) g += `<circle cx="${X(i.node)}" cy="${Y(i.node) + 2}" r="${3 + i.severity}" fill="${i.status === 'dispatched' ? TYPE[i.type][1] : 'none'}" stroke="${TYPE[i.type][1]}" stroke-width="2" opacity="${i.confidence < 0.5 ? 0.45 : 1}"><title>${TYPE[i.type][0]}, severity ${i.severity}, ${i.status}</title></circle>`;
+  const lg = [['#d6d6de', 'bridge'], ['#ef6a6a', 'closed road (dashed)'], ['#3fb97a', 'shelter'], ['#ececf1', 'hospital'], ...Object.entries(UNIT).map(([k, c]) => [c, k + ' (dot)']), ...(m.incidents.length ? [['#8d8d99', 'ring = incident waiting, disc = unit sent']] : []),
+    ...(o.p ? [['#ef6a6a', 'red shade = chance of being cut off']] : [['#7aa2ff', 'blue shade = higher ground']]), ...(o.actual ? [['#ececf1', 'white outline = actually cut off']] : [])];
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="max-width:720px" role="img" aria-label="Map of the county">${g}</svg><div class="legend">${lg.map(([c, t]) => `<span><i style="background:${c}"></i>${esc(t)}</span>`).join('')}</div>`;
+}
+const advance = a => kpis([{ label: 'Citizen reports', value: a.reports, sub: 'hours ' + (a.from_hour + 1) + ' to ' + a.to_hour }, { label: 'Incidents opened', value: a.incidents_opened }, { label: 'Merged into an open incident', value: a.reports_merged_into_open_incidents, sub: 'same emergency, reported again' },
+    { label: 'Filed as noise', value: a.filtered_as_noise }, { label: 'Roads closed now', value: a.roads_closed_now, sub: a.bridges_open + ' of 4 bridges open' }, { label: 'Units arrived', value: a.units_arrived, sub: 'and free again' }])
+  + `<div class="grid2">${card('What changed', `<ul style="margin:0 0 0 18px;padding:0">${a.events.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`
+      + table([{ k: 'name', label: 'Hospital' }, { k: 'occupied', label: 'Beds used', num: 1, f: (v, r) => v + ' / ' + r.beds }, { k: 'status', label: '', f: v => badge(v, v === 'open' ? 'good' : 'warn') }], a.hospitals))}
+     ${card('Shelters', barChart(a.shelters.map(s => ({ label: s.name, value: s.occupancy, color: s.occupancy >= s.capacity ? PALETTE[2] : PALETTE[1], note: 'of ' + s.capacity })), { max: Math.max(...a.shelters.map(s => s.capacity)) }))}</div>`;
+const plan = p => kpis([{ label: 'Confirmed incidents', value: p.incidents, sub: p.held_for_verification + ' more held: one weak report' }, { label: 'Units sent', value: p.assignments.length, sub: 'of ' + p.units + ' in service' },
+    { label: 'Waiting', value: p.waiting.length ? `<span style="color:var(--warn)">${p.waiting.length}</span>` : 0 }, { label: 'Units redirected', value: p.units_reassigned, sub: p.units_kept + ' kept their call' },
+    { label: 'Weighted wait', value: '-' + fmt.pct(p.weighted_wait_reduction, 1), sub: 'against report order, nearest unit' }])
+  + `<div class="grid2">${card('This plan against the simple way', table([{ k: 'k', label: '' }, { k: 'a', label: 'Solved together', num: 1 }, { k: 'b', label: 'In report order', num: 1 }], [
+      { k: 'Severe incidents (4 to 5) reached', a: (p.optimized.severe - p.optimized.severe_unserved) + ' of ' + p.optimized.severe, b: (p.baseline.severe - p.baseline.severe_unserved) + ' of ' + p.baseline.severe },
+      { k: 'Mean time to a severe incident', a: fmt.n(p.optimized.severe_mean_eta_s / 60, 1) + ' min', b: fmt.n(p.baseline.severe_mean_eta_s / 60, 1) + ' min' }, { k: 'Units sent', a: p.optimized.assigned, b: p.baseline.assigned }]))}
+     ${p.waiting.length ? card('Still waiting', table([{ k: 'type', label: 'Type', f: v => TYPE[v][0] }, { k: 'severity', label: 'Sev', num: 1 }, { k: 'reason', label: 'Why' }], p.waiting.slice(0, 6))) : ''}</div>`
+  + card('Most severe first', table([{ k: 'type', label: 'Incident', f: v => `<span style="color:${TYPE[v][1]}">●</span> ${TYPE[v][0]}` }, { k: 'severity', label: 'Sev', num: 1 }, { k: 'unit', label: 'Unit' }, { k: 'eta_min', label: 'ETA', num: 1, f: v => v + ' min' },
+      { k: 'hospital', label: 'Takes patient to', f: v => esc(v || '–') }, { k: 'changed', label: '', f: v => v ? badge('redirected', 'info') : '' }], p.assignments.slice(0, 7)));
+const R = {
+  load: s => kpis([{ label: 'People', value: K(s.population), sub: s.neighbourhoods + ' neighbourhoods' }, { label: 'Forecast surge', value: s.forecast.peak_surge_m + ' m', sub: '± ' + s.forecast.plus_minus_m + ' m, in ' + s.forecast.peak_in_hours + ' hours' },
+    { label: 'Shelter places', value: fmt.n(s.shelter_places), sub: s.shelters + ' shelters' }, { label: 'Hospitals', value: s.hospitals }, { label: 'Response units', value: s.units.boat + s.units.ambulance + s.units.engine, sub: `${s.units.boat} boats, ${s.units.ambulance} ambulances, ${s.units.engine} engines` }]),
+  map0: m => card('The county, calm', mapSvg(m)),
+  risk: (r, all) => kpis([{ label: 'Likely to be cut off', value: r.likely_isolated, sub: 'neighbourhoods at 50% or more' }, { label: 'People living there', value: K(r.population_at_half_or_more) },
+      { label: 'Dry, but surrounded', value: r.of_which_dry_but_cut_off, sub: 'not flooded themselves' }, { label: 'A flood-line rule flags', value: r.baseline.flagged, sub: 'elevation below forecast water' }])
+    + card(`Chance of being cut off at hour ${r.target_hour}, from ${r.samples} simulated storms`, mapSvg(all.map0, { p: r.p_isolated })),
+  evac: e => kpis([{ label: 'People told to leave', value: K(e.population), sub: e.neighbourhoods + ' neighbourhoods' }, { label: 'Expected at shelters', value: fmt.n(e.evacuees), sub: fmt.pct(e.assumed_share_needing_shelter) + ' of them (assumption)' },
+      { label: 'Places found', value: fmt.n(e.placed) }, { label: 'No place', value: `<span style="color:var(--bad)">${fmt.n(e.unmet)}</span>`, sub: 'shelters are full' }])
+    + `<div class="grid2">${card('Shelters after the allocation', barChart(e.shelters.map(s => ({ label: s.name, value: s.inflow, color: s.inflow >= s.capacity ? PALETTE[2] : PALETTE[1], note: 'of ' + s.capacity })), { max: Math.max(...e.shelters.map(s => s.capacity)) }))}
+       ${card('Largest movements', table([{ k: 'x', label: 'From block', f: (v, r) => v + ',' + r.y }, { k: 'shelter', label: 'To' }, { k: 'people', label: 'People', num: 1 }, { k: 'minutes', label: 'Drive', num: 1, f: v => v + ' min' }], e.routes.slice().sort((a, b) => b.people - a.people).slice(0, 6)))}</div>`,
+  alert: a => `<div class="small mute" style="margin-bottom:10px">Alert recorded for ${fmt.n(a.recipients)} people in ${a.neighbourhoods} neighbourhoods. ${esc(a.delivery)}.</div>`,
+  adv4: advance, adv6: advance, plan4: plan, plan6: plan, plan6b: plan,
+  map4: m => card('Hour 4', mapSvg(m)), map6: m => card('Hour 6: peak surge', mapSvg(m)),
+  tele: t => `<div class="card" style="border-color:var(--warn)">${badge('out of service', 'warn')} <b>${esc(t.name)}</b> dropped out. Its incident is back in the queue.</div>`,
+  verify: (v, all) => kpis([{ label: 'Actually cut off', value: v.actually_isolated, sub: K(v.isolated_population) + ' people' }, { label: 'Forecast caught', value: v.model.hits, sub: v.model.misses + ' missed, ' + v.model.false_alarms + ' false alarms' },
+      { label: 'Flood-line rule caught', value: v.baseline.hits, sub: v.baseline.misses + ' missed' }, { label: 'Cut off and silent', value: v.isolated_and_silent, sub: 'no report received from there' }])
+    + card('Forecast at hour 0 (red) against what happened (white outline)', mapSvg(all.map6, { p: all.risk.p_isolated, actual: v.actual }))
+    + `<div class="small mute" style="margin:-4px 0 12px">The real surge was 4.9 m against a forecast of 4.5 m, so the misses are at the edge of the flooded area. Brier score ${v.model.brier} for the forecast, ${v.baseline.brier} for the flood-line rule (lower is better).</div>`,
+  audit: a => card(`Audit log · hash chain ${a.chain_valid ? 'verifies' : 'BROKEN'}`, table([{ k: 'at', label: 'When', f: fmt.time }, { k: 'action', label: 'Action', f: v => `<span class="mono">${esc(v)}</span>` },
+    { k: 'detail', label: 'Detail', f: d => `<span class="small">${esc(Object.entries(d).filter(([, v]) => typeof v !== 'object').map(([k, v]) => `${k}: ${v}`).join(' · ').slice(0, 130))}</span>` }], a.events.slice().reverse())),
+};
+const demo = new Demo(R); demo.init();
+</script>
+</body>
+</html>
